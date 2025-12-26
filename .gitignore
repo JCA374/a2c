@@ -1,0 +1,17 @@
+# Bytecode and caches
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+env/
+venv/
+
+# Logs and checkpoints
+logs/
+*.pt
+
+# Pytest cache
+.pytest_cache/
