@@ -14,7 +14,7 @@ A2C (Advantage Actor-Critic) reinforcement learning agent for the CarRacing-v3 G
 python train_a2c.py
 
 # Custom training configuration
-python train_a2c.py --num-envs auto --cpu-threads auto --total-steps 1000000 --rollout-length 256
+python train_a2c.py --num-envs auto --cpu-threads auto --vec-backend async --total-steps 1000000 --rollout-length 256
 
 # Specify log directory
 python train_a2c.py --log-dir logs/experiment_name
@@ -52,6 +52,13 @@ pytest -v
 pytest tests/test_a2c.py::test_a2c_trainer_runs
 ```
 
+Test suite verifies correctness of:
+- **Entropy computation** ([test_a2c.py:138](tests/test_a2c.py#L138)): Ensures entropy is positive and encourages exploration
+- **Squash correction** ([test_a2c.py:166](tests/test_a2c.py#L166)): Validates change-of-variables for tanh transformation with proper broadcasting
+- **Loss signs** ([test_a2c.py:194](tests/test_a2c.py#L194)): Confirms policy/value/entropy losses have correct signs for gradient descent
+- **Reward balance** ([test_a2c.py:243](tests/test_a2c.py#L243)): Validates reward config produces learnable signal (progress rewards > penalties)
+- **Advantage clipping** ([test_a2c.py:267](tests/test_a2c.py#L267)): Prevents extreme gradient updates from penalty spikes
+
 ## Architecture
 
 ### Core Components
@@ -85,13 +92,17 @@ Lidar rays:
 - Uses ray-casting against road polygon geometry
 
 **Reward Shaping** ([env/wrappers.py](env/wrappers.py):52):
-- Progress: +2.0 per tile of track progress
-- Off-track penalty: -40.0 (when traction < 0.95)
-- Collision penalty: -20.0
-- Control cost: -0.01 × ||action||
-- Time penalty: -0.05 per step
-- Finish bonus: +400.0 (if track completed)
-- All configurable via `RewardConfig` dataclass
+- Progress: +10.0 per tile of track progress (configurable via progress_scale)
+- Off-track penalty: -0.05 per step when traction < 0.95 (default, configurable)
+- Collision penalty: -5.0 (configurable)
+- Control cost: 0.0 (disabled by default)
+- Time penalty: 0.0 (disabled by default)
+- Finish bonus: +500.0 (if track completed)
+- All configurable via `RewardConfig` dataclass in [env/config.py](env/config.py)
+
+Note: The default -0.05 off-track penalty accumulates to -50 over 1000 steps.
+Adjust via `RewardConfig` for different learning dynamics (higher penalty for
+stronger on-track guidance, lower for more exploration tolerance)
 
 **Track Seeds** ([env/tracks.py](env/tracks.py)):
 - Training: seeds 0-19 (20 tracks)

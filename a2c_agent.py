@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Tuple
@@ -25,6 +26,7 @@ class A2CConfig:
     max_grad_norm: float = 0.5
     log_interval: int = 10
     device: Optional[str] = None
+    clip_advantages: Optional[float] = None  # e.g., 10.0 to prevent extreme updates
 
 
 class RolloutBuffer:
@@ -219,7 +221,8 @@ class A2CTrainer:
         num_envs = getattr(self.envs, "num_envs", 1)
         episode_returns = np.zeros(num_envs, dtype=np.float32)
         episode_lengths = np.zeros(num_envs, dtype=np.int32)
-        completed_returns = []
+        completed_returns = deque(maxlen=10)
+        episodes_completed_count = 0
         best_return = -np.inf
 
         total_updates = self.cfg.total_steps // (self.cfg.rollout_length * num_envs)
@@ -240,7 +243,13 @@ class A2CTrainer:
                 episode_lengths += 1
                 for i, done in enumerate(dones):
                     if done:
+                        is_new_best = episode_returns[i] > best_return
+                        best_return = max(best_return, episode_returns[i])
+                        if self.best_model_path and is_new_best:
+                            torch.save(self.policy.state_dict(), self.best_model_path)
+
                         completed_returns.append((episode_returns[i], episode_lengths[i]))
+                        episodes_completed_count += 1
                         episode_returns[i] = 0.0
                         episode_lengths[i] = 0
 
@@ -261,6 +270,15 @@ class A2CTrainer:
             ) = self.buffer.get()
 
             advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+
+            # Clip advantages to prevent extreme updates from penalty spikes
+            if self.cfg.clip_advantages is not None:
+                advantages = torch.clamp(
+                    advantages,
+                    -self.cfg.clip_advantages,
+                    self.cfg.clip_advantages
+                )
+
             log_probs, entropy, values_pred = self.policy.evaluate_actions(batch_obs, batch_actions)
 
             policy_loss = -(advantages.detach() * log_probs).mean()
@@ -275,11 +293,12 @@ class A2CTrainer:
             self.optimizer.step()
 
             # Compute metrics
-            mean_return = float(np.mean([r for r, _ in completed_returns[-10:]]) if completed_returns else 0.0)
-            mean_length = float(np.mean([l for _, l in completed_returns[-10:]]) if completed_returns else 0.0)
+            mean_return = float(np.mean([r for r, _ in completed_returns]) if completed_returns else 0.0)
+            mean_length = float(np.mean([l for _, l in completed_returns]) if completed_returns else 0.0)
             # Only update best_return when we have actual completed episodes
             if completed_returns:
-                best_return = max(best_return, mean_return)
+                # best_return is now updated inside the episode completion loop
+                pass
             action_mean = self.buffer.actions.mean(dim=(0, 1)).detach().cpu().numpy()
             action_std = self.buffer.actions.std(dim=(0, 1)).detach().cpu().numpy()
             rollout_reward = float(self.buffer.rewards.mean().item())
@@ -288,7 +307,7 @@ class A2CTrainer:
             pbar.set_postfix({
                 'loss': f'{loss.item():.3f}',
                 'return': f'{mean_return:.1f}',
-                'eps': len(completed_returns),
+                'eps': episodes_completed_count,
                 'steps': global_step
             })
 
@@ -299,7 +318,7 @@ class A2CTrainer:
                     f"step={global_step} | "
                     f"loss={loss.item():.3f} | "
                     f"return={mean_return:.2f} | "
-                    f"eps={len(completed_returns)} | "
+                    f"eps={episodes_completed_count} | "
                     f"best={best_return:.2f}"
                 )
                 if self.logger:
@@ -314,7 +333,7 @@ class A2CTrainer:
                         "mean_return_last10": mean_return,
                         "mean_length_last10": mean_length,
                         "best_return": best_return,
-                        "episodes_completed": len(completed_returns),
+                        "episodes_completed": episodes_completed_count,
                         "learning_rate": lr,
                         "gamma": self.cfg.gamma,
                         "gae_lambda": self.cfg.gae_lambda,
@@ -335,8 +354,8 @@ class A2CTrainer:
                     self.logger.log_metrics(
                         metrics
                     )
-                    if self.best_model_path and mean_return >= best_return:
-                        torch.save(self.policy.state_dict(), self.best_model_path)
+                    # Model saving is now handled in the episode completion loop.
+                    # This ensures we save the model that achieved the new best return.
 
         pbar.close()
         return self.policy, completed_returns

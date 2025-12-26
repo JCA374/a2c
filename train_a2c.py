@@ -4,7 +4,7 @@ import argparse
 import os
 import random
 from functools import partial
-from typing import List, Optional
+from typing import Any, List, Optional
 
 import numpy as np
 import torch
@@ -88,13 +88,31 @@ def adjust_rollout_length_for_ram(
     return min(int(rollout_length), max_steps)
 
 
-def build_envs(num_envs: int, env_config: EnvConfig, base_seed: int) -> SimpleVectorEnv:
+def build_envs(
+    num_envs: int,
+    env_config: EnvConfig,
+    base_seed: int,
+    backend: str = "simple",
+    mp_context: Optional[str] = None,
+) -> Any:
     seed_iter = seeded_cycle(TRAIN_SEEDS)
     # Burn through seeds to get deterministic offset.
     for _ in range(base_seed % len(TRAIN_SEEDS)):
         next(seed_iter)
     env_fns: List = [partial(make_env, env_config, next(seed_iter)) for _ in range(num_envs)]
-    return SimpleVectorEnv(env_fns)
+    if backend == "simple":
+        return SimpleVectorEnv(env_fns)
+    if backend == "async":
+        try:
+            from gymnasium.vector import AsyncVectorEnv, AutoresetMode
+        except ImportError as exc:  # pragma: no cover - gymnasium required for async backend
+            raise ImportError("Async vector backend requires gymnasium>=0.29.") from exc
+        return AsyncVectorEnv(
+            env_fns,
+            context=mp_context,
+            autoreset_mode=AutoresetMode.SAME_STEP,
+        )
+    raise ValueError(f"Unknown vector backend: {backend}")
 
 
 def parse_args():
@@ -108,12 +126,20 @@ def parse_args():
     parser.add_argument("--log-interval", type=int, default=10, help="Updates between console logs.")
     parser.add_argument("--max-ram-mb", type=int, default=None,
                         help="Optional rollout buffer RAM cap in MB (reduces rollout length if needed).")
+    parser.add_argument("--vec-backend", type=str, choices=["simple", "async"], default="simple",
+                        help="Vector env backend: simple (single-process) or async (subprocesses).")
+    parser.add_argument("--mp-context", type=str, choices=["auto", "fork", "spawn", "forkserver"], default="auto",
+                        help="Multiprocessing start method for async backend (default: auto).")
     parser.add_argument("--seed", type=int, default=0, help="Base random seed.")
     parser.add_argument("--render-mode", type=str, default="rgb_array", help="CarRacing render_mode (rgb_array recommended).")
     parser.add_argument("--log-dir", type=str, default=None, help="Directory for metrics/config logs. Defaults to logs/a2c_<timestamp>.")
+    parser.add_argument("--off-track-penalty", type=float, default=None, help="Penalty for going off track (e.g., -0.1).")
+    parser.add_argument("--clip-advantages", type=float, default=None, help="Clip normalized advantages to ±value to prevent extreme updates (e.g., 10.0).")
     args = parser.parse_args()
     args.num_envs = parse_auto_positive_int(args.num_envs)
     args.cpu_threads = parse_auto_positive_int(args.cpu_threads)
+    if args.mp_context == "auto":
+        args.mp_context = None
     return args
 
 
@@ -127,8 +153,19 @@ def main():
 
     log_dir = Path(args.log_dir) if args.log_dir else Path("logs") / f"a2c_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
-    env_config = EnvConfig(render_mode=args.render_mode)
-    envs = build_envs(num_envs, env_config, base_seed=args.seed)
+    reward_cfg = None
+    if args.off_track_penalty is not None:
+        from env.config import RewardConfig
+        reward_cfg = RewardConfig(off_track_penalty=args.off_track_penalty)
+
+    env_config = EnvConfig(render_mode=args.render_mode, reward=reward_cfg)
+    envs = build_envs(
+        num_envs,
+        env_config,
+        base_seed=args.seed,
+        backend=args.vec_backend,
+        mp_context=args.mp_context,
+    )
     obs_dim = int(np.prod(envs.single_observation_space.shape))
     action_dim = int(np.prod(envs.single_action_space.shape))
     rollout_length = adjust_rollout_length_for_ram(
@@ -146,6 +183,7 @@ def main():
         total_steps=args.total_steps,
         rollout_length=rollout_length,
         log_interval=args.log_interval,
+        clip_advantages=args.clip_advantages,
     )
 
     logger = None
@@ -154,13 +192,15 @@ def main():
             log_dir,
             config={
                 "seed": args.seed,
-                "num_envs": num_envs,
-                "cpu_threads": cpu_threads,
-                "max_ram_mb": args.max_ram_mb,
-                "env_config": asdict(env_config),
-                "training_config": asdict(training_cfg),
-            },
-        )
+            "num_envs": num_envs,
+            "cpu_threads": cpu_threads,
+            "max_ram_mb": args.max_ram_mb,
+            "vec_backend": args.vec_backend,
+            "mp_context": args.mp_context,
+            "env_config": asdict(env_config),
+            "training_config": asdict(training_cfg),
+        },
+    )
 
         trainer = A2CTrainer(envs, training_cfg, logger=logger)
         trainer.train()
