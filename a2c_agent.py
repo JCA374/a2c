@@ -20,7 +20,7 @@ class A2CConfig:
     rollout_length: int = 128
     gamma: float = 0.99
     gae_lambda: float = 0.95
-    learning_rate: float = 3e-4
+    learning_rate: float = 1e-4  # REDUCED from 3e-4 for value function stability
     ent_coef: float = 0.01
     value_coef: float = 0.5
     max_grad_norm: float = 0.5

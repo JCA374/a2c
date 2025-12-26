@@ -153,12 +153,13 @@ def main():
 
     log_dir = Path(args.log_dir) if args.log_dir else Path("logs") / f"a2c_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
-    reward_cfg = None
+    # Only override reward config if user specifies custom values
+    env_config_kwargs = {"render_mode": args.render_mode}
     if args.off_track_penalty is not None:
         from env.config import RewardConfig
-        reward_cfg = RewardConfig(off_track_penalty=args.off_track_penalty)
+        env_config_kwargs["reward"] = RewardConfig(off_track_penalty=args.off_track_penalty)
 
-    env_config = EnvConfig(render_mode=args.render_mode, reward=reward_cfg)
+    env_config = EnvConfig(**env_config_kwargs)
     envs = build_envs(
         num_envs,
         env_config,
