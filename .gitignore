@@ -15,3 +15,8 @@ voice/*/audio/
 video/build/
 video/*.log
 podcast/*.log
+results/*.log
+voice/*.log
+voice/*/*.log
+voice/*/book.yaml
+voice/*/pipeline.log.jsonl
