@@ -56,8 +56,10 @@ def draw_rays(img, env, obs):
         dr.ellipse([p[0] - 3, p[1] - 3, p[0] + 3, p[1] + 3], outline=(255, 210, 60, 230), width=2)
 
 
-def episode_frames(agent, seed, every=1, size=(600, 400), rays=False, label=None, max_frames=None):
-    """Drive one episode under the score rules; returns (PIL frames, result dict). Last frame carries the outcome."""
+def episode_frames(agent, seed, every=1, size=(600, 400), rays=False, label=None, max_frames=None, store=None):
+    """Drive one episode under the score rules; returns (frames, result dict). Last frame carries the outcome.
+    `store(img)` turns each frame into what is kept (e.g. JPEG bytes for films); default: the PIL image."""
+    store = store or (lambda im: im)
     cfg = EnvConfig(training=False, render_mode="rgb_array")
     env = make_env(cfg)
     obs, _ = env.reset(seed=seed)
@@ -71,7 +73,7 @@ def episode_frames(agent, seed, every=1, size=(600, 400), rays=False, label=None
             dr.text((10, 8), f"score {info['score']:.0f}   frame {steps}", font=FONT, fill=(255, 255, 255))
             if label:
                 dr.text((10, 28), label, font=FONT, fill=(255, 230, 120))
-            frames.append(img.resize(size) if img.size != size else img)
+            frames.append(store(img.resize(size) if img.size != size else img))
         obs, _, term, trunc, info = env.step(agent.drive(obs))
         steps += 1
         if term or trunc or (max_frames and steps >= max_frames):
@@ -81,6 +83,6 @@ def episode_frames(agent, seed, every=1, size=(600, 400), rays=False, label=None
     dr.rectangle([0, 150, 600, 250], fill=(0, 0, 0, 170))
     dr.text((300, 180), outcome(info, steps), font=FONT_BIG, fill=(255, 255, 255), anchor="mm")
     dr.text((300, 222), f"score {info['score']:.1f}", font=FONT_BIG, fill=(255, 220, 90), anchor="mm")
-    frames.append(img.resize(size) if img.size != size else img)
+    frames.append(store(img.resize(size) if img.size != size else img))
     env.close()
     return frames, {"score": float(info["score"]), "lap": bool(info["lap"]), "tiles": float(info["tiles"]), "steps": steps}

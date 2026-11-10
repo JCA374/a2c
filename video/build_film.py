@@ -8,6 +8,7 @@ track. When the narration runs longer than the footage, the last frame is held.
 """
 import csv
 import glob
+import io
 import json
 import os
 import subprocess
@@ -73,19 +74,32 @@ def best_model():
     return f"{RUN}/best.pt"
 
 
-_CLIPS = {}
+def jpeg(img):
+    buf = io.BytesIO()
+    img.convert("RGB").save(buf, "JPEG", quality=92)
+    return buf.getvalue()
+
+
+class Frames:
+    """An episode's frames kept JPEG-compressed in memory (1000 raw 900x600 frames would be 1.6 GB)."""
+
+    def __init__(self, data):
+        self.data = data
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, i):
+        return Image.open(io.BytesIO(self.data[i])).convert("RGB")
 
 
 def footage(model, seed, every=1, rays=True, label=None):
-    key = (model, seed, every, rays, label)
-    if key not in _CLIPS:
-        frames, res = episode_frames(Agent.load(model), seed, every=every, size=(600, 400), rays=rays, label=label)
-        _CLIPS[key] = ([f.resize((900, 600)) for f in frames], res)
-    return _CLIPS[key]
+    frames, res = episode_frames(Agent.load(model), seed, every=every, size=(600, 400), rays=rays, label=label, store=jpeg)
+    return Frames(frames), res
 
 
 def play(frames, n, i):
-    return frames[min(i, len(frames) - 1)]
+    return frames[min(i, len(frames) - 1)].resize((900, 600))
 
 
 def terminal(lines, n_visible, title="terminal", size=(1160, 520), fsize=21):
@@ -170,7 +184,7 @@ def h_intro(n):
                 1 + int(5 * i / max(1, n * 0.6)))
         d.text((60, 620), "49 numbers in, 2 out:", font=font(22), fill=MUTED)
         d.text((60, 650), "steer and pedal", font=font(22), fill=MUTED)
-        img.paste(play(frames, n, i), (340, 70))
+        img.paste(play(frames, n, i).resize((810, 540)), (420, 90))
         yield img
 
 
@@ -237,8 +251,8 @@ def h_evaluate(n):
         header(d, "4. Measure it", "score = +1000/N per new tile, -0.1 per frame, 1000 frames")
         img.paste(terminal(lines, 1 + int(len(lines) * i / max(1, n * 0.5)), size=(1160, 280), fsize=19), (60, 150))
         if scores and i > n * 0.4:
-            k = int(len(scores) * ease((i - 0.4 * n) / (0.4 * n)))
-            img.paste(chart(np.arange(1, k + 1) / 100, scores[:k] if k > 1 else scores[:2], (1160, 250),
+            k = max(2, int(len(scores) * ease((i - 0.4 * n) / (0.4 * n))))
+            img.paste(chart(np.arange(1, k + 1) / 100, scores[:k], (1160, 250),
                             "the 100 goal tracks, sorted by score (share of tracks)", "score", goal=900,
                             ylim=(min(min(scores), 0), 1000), color=WARN), (60, 450))
         yield img
@@ -278,7 +292,7 @@ def e_task(n):
 
 
 def e_blind(n):
-    frames, _ = footage(champions()[0], 2025, every=1, rays=False, label="what v1's lidar returned: 0, 0, 0, 0 ...")
+    frames, _ = footage(champions()[0], 2025, every=1, rays=False, label="illustration: an early v2 car, greyed out")
     for i in range(n):
         img = canvas()
         d = ImageDraw.Draw(img)
@@ -353,14 +367,15 @@ def e_result(n):
         img = canvas()
         d = ImageDraw.Draw(img)
         header(d, "The result", "100 tracks it never saw, driven once, deterministically")
-        rows = [("v1 A2C, blind lidar", -42.9, MUTED)] + ([(g["label"], g["mean"], GOOD)] if g else [])
+        rows = [("v1 A2C, blind lidar", -42.9, MUTED)] + ([(f"v2 PPO, {step_of(g['policy']) / 1e6:.1f} M steps", g["mean"], GOOD)] if g else [])
         X0 = 420
         Xv = lambda v: X0 + (v + 100) / 1100 * 760
         for k, (lab, v, col) in enumerate(rows):
             y = 220 + 120 * k
             d.text((60, y + 10), lab[:34], font=font(22), fill=INK)
             grow = ease(i / (0.5 * n))
-            d.rectangle([Xv(0), y, Xv(0) + (Xv(v) - Xv(0)) * grow, y + 50], fill=col)
+            xa, xb = Xv(0), Xv(0) + (Xv(v) - Xv(0)) * grow
+            d.rectangle([min(xa, xb), y, max(xa, xb), y + 50], fill=col)
             d.text((Xv(v) + (10 if v >= 0 else -10), y + 25), f"{v:.1f}", font=font(26, True), fill=INK,
                    anchor="lm" if v >= 0 else "rm")
         d.line([Xv(900), 190, Xv(900), 470], fill=BAD, width=2)
@@ -421,7 +436,9 @@ def main():
     title, desc, scenes = FILMS[film]
     os.makedirs(TMP, exist_ok=True)
     os.makedirs(OUT, exist_ok=True)
-    files = [render_scene(film, k, fn) for k, fn in enumerate(scenes, 1)]
+    resume = "--resume" in sys.argv  # keep scene files that already exist
+    files = [os.path.join(TMP, f"{film}_scene{k:02d}.mp4") if resume and os.path.exists(os.path.join(TMP, f"{film}_scene{k:02d}.mp4"))
+             else render_scene(film, k, fn) for k, fn in enumerate(scenes, 1)]
     lst = os.path.join(TMP, f"{film}_list.txt")
     open(lst, "w").write("".join(f"file '{os.path.abspath(f)}'\n" for f in files))
     mp4 = os.path.join(OUT, f"{film}.mp4")

@@ -1,0 +1,14 @@
+[
+ {
+  "file": "howto.mp4",
+  "poster": "howto.jpg",
+  "title": "How to use this project",
+  "desc": "Set up, train, watch, evaluate and test, in about three minutes. 2.9 minutes, narrated."
+ },
+ {
+  "file": "explainer.mp4",
+  "poster": "explainer.jpg",
+  "title": "How the car learned to race",
+  "desc": "Why version one was blind, what the car sees now, how it learns, and how well it drives. 2.6 minutes, narrated."
+ }
+]
