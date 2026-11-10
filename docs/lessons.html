@@ -3,14 +3,27 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Lessons</title>
+<title>Drive A2C: Lessons</title>
 <link rel="stylesheet" href="style.css?v=ea0a339d">
 </head>
 <body>
 <main>
 <h1>Lessons</h1>
-<p class="lede">What this project and earlier ones taught. Newest first.</p>
-<div class="box"><h3>From this project</h3><ul id="new"><!-- add lessons as they are learned --></ul></div>
+<p class="lede">What this project taught. Newest first.</p>
+<div class="box"><h3>From this project</h3><ul id="new">
+<li><b>Check that the inputs carry information before tuning the learner.</b> v1 spent its effort on rewards, learning
+rates and advantage clipping, while the lidar read 0 on every ray. One print of an observation would have shown it.</li>
+<li><b>A dictionary key that never exists fails silently.</b> <code>info.get("finished_track", False)</code> and
+<code>getattr(wheel, "ground_contact", True)</code> both return the default forever. Test that a bonus can be paid and that a
+penalty can fire.</li>
+<li><b>Profile before porting.</b> 99% of a CarRacing step was drawing an image the agent never used; turning it off gave
+~90&times; on the env, more than any language port could.</li>
+<li><b>Train on the metric.</b> v1's shaped return (best 501) said nothing about the real score (&minus;43). v2 trains on CarRacing's own
+reward and reports only that.</li>
+<li><b>Keep the reference as the judge.</b> The fast env is checked against the reference, bit for bit, in the test suite; the goal check
+runs in the reference.</li>
+<li><b>Best-of-many flatters.</b> The best validation score is the maximum of many checks on 16 tracks; the goal is measured once, on 100 other tracks.</li>
+</ul></div>
 </main>
 <script src="site.js?v=0b775546"></script>
 <script src="common.js?v=448bd7f6"></script>

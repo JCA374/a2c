@@ -3,14 +3,23 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Curriculum</title>
+<title>Drive A2C: Curriculum</title>
 <link rel="stylesheet" href="style.css?v=ea0a339d">
 </head>
 <body>
 <main>
 <h1>Curriculum</h1>
 <p class="lede">Every run's stages: the world, the reward, the check that ends the stage, the cap and the expected outcome, written down <i>before</i> the stage starts.</p>
-<!-- WRITE: a box with what earlier projects taught about curricula for this task -->
+<div class="box"><h3>Why two stages</h3><ul>
+<li><b>Learn the road</b>: a beginner spends most of a 1000-frame episode on the grass, learning nothing new. So this stage cuts
+an episode short after 1 s with all four wheels on grass, or 3 s without reaching a new tile, at a price of &minus;50, so that
+ending early is never a shortcut.</li>
+<li><b>Race</b>: once the car keeps to the road, training switches to the task's own rules (1000 frames, no early stops), so
+it also learns to recover from mistakes instead of having them cut off.</li>
+<li>The reward is CarRacing's own score in both stages. The agent is trained on exactly what it is judged on.</li>
+<li>Stages switch on the validation mean (16 fixed tracks, deterministic). Checks never use training episodes, which are
+noisy and drive a random policy.</li>
+</ul></div>
 <div id="runs"></div>
 </main>
 <script src="site.js?v=0b775546"></script>

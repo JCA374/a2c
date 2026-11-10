@@ -1,174 +1,47 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Guidance for Claude Code in this repository.
 
-## Project Overview
+## Project
 
-A2C (Advantage Actor-Critic) reinforcement learning agent for the CarRacing-v3 Gymnasium environment. The agent uses a compact observation space with lidar-style ray casting instead of raw pixel input.
+An actor-critic agent (A2C, and PPO on the same network; PPO is the default) that learns Gymnasium's `CarRacing-v3`
+from a 49-number observation instead of pixels. Goal: mean score >= 900 on 100 unseen tracks (seeds 5000-5099),
+deterministic, CarRacing's own reward, 1000 frames. The v1 code (git d8ea104, Dec 2025) scored -42.9: its lidar
+always read 0. Live site: https://jca374.github.io/a2c/ (GitHub Pages from `main:/docs`).
 
-## Development Commands
+## Commands
 
-### Training
 ```bash
-# Basic training with default parameters (500k steps, auto envs based on CPU cores)
-python train_a2c.py
-
-# Custom training configuration
-python train_a2c.py --num-envs auto --cpu-threads auto --vec-backend async --total-steps 1000000 --rollout-length 256
-
-# Specify log directory
-python train_a2c.py --log-dir logs/experiment_name
+.venv/bin/python train_a2c.py --run NAME                 # PPO, 6M steps; --algo a2c for A2C; --resume runs/NAME
+.venv/bin/python evaluate.py runs/NAME/best.pt           # goal check, reference env -> results/goal_*.json
+.venv/bin/python play.py runs/NAME/best.pt               # watch in a window
+.venv/bin/python -m pytest -q tests                      # ~30 s
+.venv/bin/python publish.py [--push]                     # rebuild the site (publish_loop.sh does this every 15 min)
+.venv/bin/python video/build_film.py howto|explainer     # films (needs voice/film-<name> exported)
 ```
+The venv was moved from another path: `.venv/bin/pip` has a stale shebang, use `.venv/bin/python -m pip`.
 
-Training features:
-- **Progress bar**: Real-time training progress with live metrics (loss, return, episodes completed, steps)
-- **Periodic logging**: Detailed metrics printed at log intervals (configurable with `--log-interval`)
-- Logs saved to `logs/a2c_<timestamp>/` by default
-- `config.json`: Training configuration
-- `metrics.csv`: Per-update metrics
-- `best_model.pt`: Best model checkpoint based on mean return
+## Layout
 
-### Playing Trained Models
-```bash
-# Play a saved model
-python play_model.py --model-path logs/a2c_20241226_143000/best_model.pt
+- `env/make_env.py`: CarRacing-v3 (unwrapped) -> `skip_state_pixels` (training) -> `TwoAxisAction` -> `ScoreAndShaping`
+  -> `TimeLimit(1000)` -> `TrackObservation`. `score_config()` / `EnvConfig(training=False)` = the task's own rules.
+- `env/wrappers.py`: `TrackObservation` (49 numbers; docstring lists them), `ScoreAndShaping` (`info["score"]` is the
+  metric; training-only early stops), `TwoAxisAction` (steer, pedal).
+- `env/lidar.py`: `cast_python` is the reference; `cast_numba` compiles the same source. Must stay bit-identical
+  (`tests/test_lidar.py`). Road tiles come from `body.fixtures[0].shape.vertices` of `env.road`.
+- `env/tracks.py`: validation 100-115 (selection), test 2024-2033 (Play tab), goal 5000-5099 (goal checks only).
+- `a2c_agent.py`: `ActorCritic`, `RolloutBuffer` (GAE), `update()` (A2C or PPO), `Agent` (net + obs normalisation;
+  `save`/`load` hold everything needed to drive).
+- `train_a2c.py`: `STAGES` curriculum, AsyncVectorEnv (fork, SAME_STEP autoreset, `final_obs` bootstrap on truncation),
+  validation pool, run files in `runs/<run>/` (stats.csv, events.jsonl, curriculum.json, best.pt, champions/).
+- `viz/render.py`: drawing for replays/clips/films; no policy imports it.
+- `experiments/bakeoff/`: lidar kernel in Python, NumPy, numba, C++, Rust, Go (`./build.sh && python bench.py`).
+- Site: `publish.py` (generic, from the ml-project-site skill), `site.json`, `site_hooks.py`, `docs/` (pages; `docs/app.js`
+  carries a small project patch for score-valued goals), `podcast.conf` + `podcast/` (project-podcast skill).
 
-# Play with custom rendering
-python play_model.py --model-path logs/a2c_20241226_143000/best_model.pt --episodes 10 --render-mode human
-```
+## Rules
 
-### Testing
-```bash
-# Run all tests
-pytest
-
-# Run specific test file
-pytest tests/test_a2c.py
-
-# Run with verbose output
-pytest -v
-
-# Run specific test function
-pytest tests/test_a2c.py::test_a2c_trainer_runs
-```
-
-Test suite verifies correctness of:
-- **Entropy computation** ([test_a2c.py:138](tests/test_a2c.py#L138)): Ensures entropy is positive and encourages exploration
-- **Squash correction** ([test_a2c.py:166](tests/test_a2c.py#L166)): Validates change-of-variables for tanh transformation with proper broadcasting
-- **Loss signs** ([test_a2c.py:194](tests/test_a2c.py#L194)): Confirms policy/value/entropy losses have correct signs for gradient descent
-- **Reward balance** ([test_a2c.py:243](tests/test_a2c.py#L243)): Validates reward config produces learnable signal (progress rewards > penalties)
-- **Advantage clipping** ([test_a2c.py:267](tests/test_a2c.py#L267)): Prevents extreme gradient updates from penalty spikes
-
-## Architecture
-
-### Core Components
-
-**A2C Agent** ([a2c_agent.py](a2c_agent.py)):
-- `ActorCritic`: Neural network with separate policy and value heads (256 hidden units, tanh activation)
-- `RolloutBuffer`: Fixed-size storage for rollouts with GAE computation
-- `A2CTrainer`: Main training loop with vectorized environments
-- Uses tanh-squashed Gaussian policy for continuous actions
-- Includes action space biasing for CarRacing (encourages throttle, discourages brake)
-
-**Environment Stack** ([env/make_env.py](env/make_env.py)):
-Wrappers applied in this order:
-1. Base `CarRacing-v3` environment
-2. `ActionClipWrapper`: Clips actions to valid bounds
-3. `CarRacingRewardWrapper`: Competition-style reward shaping
-4. `TimeLimit`: Step-based episode limit (1000 steps default)
-5. `EpisodeTimeLimit`: Wall-clock time limit (60 seconds default)
-6. `CompactObservation`: Converts pixel obs to compact state + lidar rays
-
-**Compact Observation** ([env/wrappers.py](env/wrappers.py)):
-Vector size: 8 base features + 32 lidar rays (default)
-
-Base features (all float32, normalized):
-- Speed, local velocity (x,y), heading (cos, sin)
-- Angular velocity, mean steer angle, traction fraction
-
-Lidar rays:
-- 32 rays spanning -0.9π to 0.9π relative to car heading
-- Each ray returns normalized distance to road edge [0,1]
-- Uses ray-casting against road polygon geometry
-
-**Reward Shaping** ([env/wrappers.py](env/wrappers.py):52):
-- Progress: +10.0 per tile of track progress (configurable via progress_scale)
-- Off-track penalty: -0.05 per step when traction < 0.95 (default, configurable)
-- Collision penalty: -5.0 (configurable)
-- Control cost: 0.0 (disabled by default)
-- Time penalty: 0.0 (disabled by default)
-- Finish bonus: +500.0 (if track completed)
-- All configurable via `RewardConfig` dataclass in [env/config.py](env/config.py)
-
-Note: The default -0.05 off-track penalty accumulates to -50 over 1000 steps.
-Adjust via `RewardConfig` for different learning dynamics (higher penalty for
-stronger on-track guidance, lower for more exploration tolerance)
-
-**Track Seeds** ([env/tracks.py](env/tracks.py)):
-- Training: seeds 0-19 (20 tracks)
-- Validation: seeds 101-105 (5 tracks)
-- Test: seeds 2024-2033 (10 tracks)
-
-### Key Implementation Details
-
-**Vectorized Training**:
-- `SimpleVectorEnv` ([env/vector_env.py](env/vector_env.py)) provides parallel environment execution
-- Automatically resets environments on episode termination
-- Training uses multiple parallel envs (default: 4) for faster data collection
-
-**GAE (Generalized Advantage Estimation)**:
-- Implemented in `RolloutBuffer.compute_returns_and_advantages`
-- Default λ=0.95, γ=0.99
-- Advantages normalized before policy update
-
-**Action Space Handling**:
-- Raw actions sampled from Gaussian distribution
-- Tanh squashing maps to [-1, 1]
-- Linear transformation to environment action bounds [low, high]
-- Log-prob corrected for tanh transformation (important for policy gradient)
-
-**Logging** ([log_utils.py](log_utils.py)):
-- CSV-based metrics logging (not TensorBoard)
-- JSON config snapshot
-- Tracks all hyperparameters and training metrics per update
-
-## Configuration
-
-All configurations use dataclasses:
-- `A2CConfig`: Training hyperparameters
-- `EnvConfig`: Environment setup
-- `RewardConfig`: Reward shaping parameters
-- `EpisodeConfig`: Episode limits
-- `CompactStateConfig`: Observation space configuration
-
-Modify configs by:
-1. Creating dataclass instances with custom values in training scripts
-2. Passing command-line arguments (for training script)
-3. Directly editing dataclass defaults for global changes
-
-## Common Development Tasks
-
-### Adding New Environment Wrappers
-1. Create wrapper class in [env/wrappers.py](env/wrappers.py)
-2. Add to wrapper stack in `_build_env()` in [env/make_env.py](env/make_env.py)
-3. Order matters: reward shaping before observation transformation
-4. Add tests in [tests/test_wrappers.py](tests/test_wrappers.py)
-
-### Modifying Network Architecture
-- Edit `ActorCritic.__init__()` in [a2c_agent.py](a2c_agent.py):86
-- Current: 2-layer MLP with 256 hidden units and tanh activation
-- Separate policy and value networks share no parameters
-- Action biases for CarRacing environment in `_init_action_biases()`
-
-### Changing Training Algorithm
-- Core update logic in `A2CTrainer.train()` at [a2c_agent.py](a2c_agent.py):214
-- Loss computation at [a2c_agent.py](a2c_agent.py):264-268
-- Policy loss: -advantages * log_probs (A2C objective)
-- Value loss: MSE between predicted values and returns
-- Entropy bonus: encourages exploration
-
-### Debugging Environment Issues
-- Check observation space: `CompactObservation._compact_state()` in [env/wrappers.py](env/wrappers.py):186
-- Verify reward shaping: `CarRacingRewardWrapper.step()` in [env/wrappers.py](env/wrappers.py):75
-- Lidar ray visualization: rays cast in `_cast_lidar()` at [env/wrappers.py](env/wrappers.py):237
-- Road polygon detection: `_point_on_road()` at [env/wrappers.py](env/wrappers.py):256
+- The reference env (pixels drawn, `lidar_impl="python"`) is the judge: goal checks run in it (`evaluate.py`).
+  The fast path is for training only and is tested equal to it (`tests/test_equivalence.py`).
+- Report only CarRacing's own score. Never quote the training return as the score.
+- `pkill -f`/`pgrep -f` with a pattern that also appears in the same shell command kills that shell: use `[t]rain_a2c`.

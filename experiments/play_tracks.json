@@ -1,0 +1,112 @@
+[
+ {
+  "id": "track2024",
+  "seed": 2024,
+  "tiles": 279,
+  "sharpest": 120,
+  "bends": 5,
+  "hairpins": 1,
+  "straight": 51,
+  "title": "Track 2024",
+  "desc": "short (279 tiles); 1 hairpin; 5 sharp bends, the sharpest turns 120 degrees in 35 m; longest straight 51 tiles"
+ },
+ {
+  "id": "track2025",
+  "seed": 2025,
+  "tiles": 256,
+  "sharpest": 104,
+  "bends": 6,
+  "hairpins": 0,
+  "straight": 41,
+  "title": "Track 2025",
+  "desc": "short (256 tiles); 6 sharp bends, the sharpest turns 104 degrees in 35 m; longest straight 41 tiles"
+ },
+ {
+  "id": "track2026",
+  "seed": 2026,
+  "tiles": 300,
+  "sharpest": 139,
+  "bends": 6,
+  "hairpins": 1,
+  "straight": 38,
+  "title": "Track 2026",
+  "desc": "medium-length (300 tiles); 1 hairpin; 6 sharp bends, the sharpest turns 139 degrees in 35 m; longest straight 38 tiles"
+ },
+ {
+  "id": "track2027",
+  "seed": 2027,
+  "tiles": 295,
+  "sharpest": 161,
+  "bends": 7,
+  "hairpins": 4,
+  "straight": 40,
+  "title": "Track 2027",
+  "desc": "medium-length (295 tiles); 4 hairpins; 7 sharp bends, the sharpest turns 161 degrees in 35 m; longest straight 40 tiles"
+ },
+ {
+  "id": "track2028",
+  "seed": 2028,
+  "tiles": 321,
+  "sharpest": 156,
+  "bends": 7,
+  "hairpins": 3,
+  "straight": 39,
+  "title": "Track 2028",
+  "desc": "long (321 tiles); 3 hairpins; 7 sharp bends, the sharpest turns 156 degrees in 35 m; longest straight 39 tiles"
+ },
+ {
+  "id": "track2029",
+  "seed": 2029,
+  "tiles": 297,
+  "sharpest": 136,
+  "bends": 5,
+  "hairpins": 2,
+  "straight": 34,
+  "title": "Track 2029",
+  "desc": "medium-length (297 tiles); 2 hairpins; 5 sharp bends, the sharpest turns 136 degrees in 35 m; longest straight 34 tiles"
+ },
+ {
+  "id": "track2030",
+  "seed": 2030,
+  "tiles": 289,
+  "sharpest": 124,
+  "bends": 7,
+  "hairpins": 3,
+  "straight": 47,
+  "title": "Track 2030",
+  "desc": "medium-length (289 tiles); 3 hairpins; 7 sharp bends, the sharpest turns 124 degrees in 35 m; longest straight 47 tiles"
+ },
+ {
+  "id": "track2031",
+  "seed": 2031,
+  "tiles": 321,
+  "sharpest": 146,
+  "bends": 8,
+  "hairpins": 3,
+  "straight": 47,
+  "title": "Track 2031",
+  "desc": "long (321 tiles); 3 hairpins; 8 sharp bends, the sharpest turns 146 degrees in 35 m; longest straight 47 tiles"
+ },
+ {
+  "id": "track2032",
+  "seed": 2032,
+  "tiles": 324,
+  "sharpest": 156,
+  "bends": 7,
+  "hairpins": 1,
+  "straight": 32,
+  "title": "Track 2032",
+  "desc": "long (324 tiles); 1 hairpin; 7 sharp bends, the sharpest turns 156 degrees in 35 m; longest straight 32 tiles"
+ },
+ {
+  "id": "track2033",
+  "seed": 2033,
+  "tiles": 256,
+  "sharpest": 148,
+  "bends": 3,
+  "hairpins": 2,
+  "straight": 40,
+  "title": "Track 2033",
+  "desc": "short (256 tiles); 2 hairpins; 3 sharp bends, the sharpest turns 148 degrees in 35 m; longest straight 40 tiles"
+ }
+]

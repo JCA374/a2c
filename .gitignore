@@ -11,3 +11,7 @@ runs/*.log
 experiments/bakeoff/out/*.so
 experiments/bakeoff/out/*.npz
 experiments/bakeoff/rust/target/
+voice/*/audio/
+video/build/
+video/*.log
+podcast/*.log

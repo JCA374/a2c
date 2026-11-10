@@ -26,7 +26,7 @@ def outcome(info, steps) -> str:
 
 def world_to_screen(raw, pts):
     """CarRacing's camera (car_racing.py _render): zoom, rotate by -hull.angle, car at (W/2, H/4) from the bottom."""
-    from gymnasium.envs.box2d.car_racing import SCALE, WINDOW_H, WINDOW_W, ZOOM
+    from gymnasium.envs.box2d.car_racing import SCALE, VIDEO_H, VIDEO_W, WINDOW_H, WINDOW_W, ZOOM
     t = raw.t
     zoom = 0.1 * SCALE * max(1 - t, 0) + ZOOM * SCALE * min(t, 1)
     a = -raw.car.hull.angle
@@ -34,7 +34,8 @@ def world_to_screen(raw, pts):
     p = (np.asarray(pts, float) - [cx, cy]) * zoom
     rx = p[:, 0] * math.cos(a) - p[:, 1] * math.sin(a)
     ry = p[:, 0] * math.sin(a) + p[:, 1] * math.cos(a)
-    return np.stack([WINDOW_W / 2 + rx, WINDOW_H - (WINDOW_H / 4 + ry)], 1)
+    # drawn on the 1000x800 window, flipped vertically, then scaled to the 600x400 rgb_array frame
+    return np.stack([(WINDOW_W / 2 + rx) * VIDEO_W / WINDOW_W, (WINDOW_H - (WINDOW_H / 4 + ry)) * VIDEO_H / WINDOW_H], 1)
 
 
 def draw_rays(img, env, obs):

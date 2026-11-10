@@ -1,0 +1,81 @@
+{
+ "meta": {
+  "load_avg": 7.2,
+  "n_ref_poses": 900,
+  "rays": 19,
+  "step": 1.0,
+  "maxd": 60.0,
+  "threads": 8,
+  "cpu_count": 8,
+  "tracks": [
+   319,
+   275,
+   335
+  ]
+ },
+ "rows": [
+  {
+   "impl": "Python (reference)",
+   "bit_identical": 1.0,
+   "max_abs_diff": 0.0,
+   "poses_per_s_1": 80.69301842521037,
+   "poses_per_s_all": null,
+   "one_pose_us": 4549.245149974013,
+   "speedup_1": 1.0
+  },
+  {
+   "impl": "NumPy (vectorised)",
+   "bit_identical": 1.0,
+   "max_abs_diff": 0.0,
+   "poses_per_s_1": 150.01488292642725,
+   "poses_per_s_all": null,
+   "one_pose_us": 5214.4610733375885,
+   "speedup_1": 1.8590813165015911
+  },
+  {
+   "impl": "numba",
+   "bit_identical": 1.0,
+   "max_abs_diff": 0.0,
+   "poses_per_s_1": 13556.771369363953,
+   "poses_per_s_all": 68060.80221484267,
+   "one_pose_us": 20.497566680811968,
+   "speedup_1": 168.00426646487304
+  },
+  {
+   "impl": "C++ -O2",
+   "bit_identical": 1.0,
+   "max_abs_diff": 0.0,
+   "poses_per_s_1": 13441.263995296307,
+   "poses_per_s_all": 42795.24992042703,
+   "one_pose_us": 74.25622335479905,
+   "speedup_1": 166.57282448486205
+  },
+  {
+   "impl": "C++ -O3 native",
+   "bit_identical": 1.0,
+   "max_abs_diff": 0.0,
+   "poses_per_s_1": 23322.485980871625,
+   "poses_per_s_all": 78065.35115463201,
+   "one_pose_us": 60.88023670599796,
+   "speedup_1": 289.02730912821005
+  },
+  {
+   "impl": "Rust",
+   "bit_identical": 1.0,
+   "max_abs_diff": 0.0,
+   "poses_per_s_1": 16680.862265250642,
+   "poses_per_s_all": 59402.32822983197,
+   "one_pose_us": 64.35781998637442,
+   "speedup_1": 206.72001854424562
+  },
+  {
+   "impl": "Go",
+   "bit_identical": 1.0,
+   "max_abs_diff": 0.0,
+   "poses_per_s_1": 7503.865785309519,
+   "poses_per_s_all": 30738.872429807412,
+   "one_pose_us": 102.46244331938215,
+   "speedup_1": 92.99275119153478
+  }
+ ]
+}

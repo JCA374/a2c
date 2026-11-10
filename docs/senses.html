@@ -3,17 +3,62 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>How it sees</title>
+<title>Drive A2C: How it sees</title>
 <link rel="stylesheet" href="style.css?v=ea0a339d">
 </head>
 <body>
 <main>
 <h1>How it sees</h1>
-<p class="lede"><!-- WRITE: every input the model gets, what it is, and the rule that it only sees what it may (with the test that checks it). A table of inputs, an example frame with the hidden state drawn for the viewer. --></p>
+<p class="lede">The car never sees pixels. Every frame (50 per second) it gets <b>49 numbers</b>, computed from the
+simulator's own state, and answers with <b>2 numbers</b>: steering (&minus;1 left … +1 right) and a pedal (+ gas, &minus; brake).</p>
+<figure class="box"><img src="img/sees.png" alt="The car on a test track with its 19 lidar rays drawn in blue and the centre-line points ahead in yellow" style="width:100%;max-width:600px;border-radius:8px">
+<figcaption class="muted small">A real frame from the best model on test track 2024, frame 150. <b>Blue</b>: the 19 lidar rays, each ending where
+it leaves the road. <b>Yellow</b>: the centre-line points 2, 4 and 7 tiles ahead (the others, up to 40 tiles, are beyond the top
+of the picture). The drawing is for you; the model only gets the numbers below.</figcaption></figure>
+
+<h2>The 49 inputs</h2>
+<div class="tablewrap"><table class="t">
+<tr><th>#</th><th>Input</th><th>What it tells the driver</th><th>Scale</th></tr>
+<tr><td>0-2</td><td>speed, forward and sideways velocity</td><td>how fast, and whether the car is sliding sideways (drifting)</td><td>/60</td></tr>
+<tr><td>3</td><td>yaw rate</td><td>how fast the car is turning (a spin shows up here first)</td><td>/3</td></tr>
+<tr><td>4</td><td>front-wheel steer angle</td><td>where the wheels point now (steering is not instant)</td><td>/0.4 rad</td></tr>
+<tr><td>5-8</td><td>each wheel on road (1) or grass (0)</td><td>grass has much less grip</td><td>0/1</td></tr>
+<tr><td>9-10</td><td>front and rear wheel rim speed</td><td>wheel spin when it accelerates, locked wheels when it brakes</td><td>/60</td></tr>
+<tr><td>11</td><td>distance from the centre line</td><td>+ left, &minus; right; &plusmn;1 is the road edge</td><td>/6.7</td></tr>
+<tr><td>12-13</td><td>heading error (sin, cos)</td><td>the angle between the car's nose and the road's direction</td><td>&minus;1…1</td></tr>
+<tr><td>14-29</td><td>8 centre-line points 2, 4, 7, 11, 16, 22, 30, 40 tiles ahead</td><td>the shape of the next ~140 m of road, in the car's own frame (forward, left)</td><td>/60</td></tr>
+<tr><td>30-48</td><td>19 lidar rays over &plusmn;108&deg;</td><td>how far the road goes in each direction (1 = 60 m or more)</td><td>/60</td></tr>
+</table></div>
+<p class="muted small">Before the network sees them, each input is standardised with a running mean and spread measured during
+training (saved inside every checkpoint), and clipped to &plusmn;10.</p>
+
+<h2>The numbers at that frame</h2>
+<p class="muted small" id="actnote"></p>
+<div class="tablewrap"><table class="t" id="vals"></table></div>
+
+<h2>What it is not allowed to see</h2>
+<div class="box"><ul>
+<li>No future: everything comes from the car's own state and the road map at this instant. The centre line ahead is
+what a driver who knows the circuit would know; it is the same information the road pixels would show, without
+having to learn vision.</li>
+<li>No score, no tile counter, no timer, no track seed.</li>
+<li>Training never uses the 16 validation tracks, the 10 Play tracks or the 100 goal tracks; it drives fresh random tracks.</li>
+</ul></div>
+
+<h2>What was wrong before (v1)</h2>
+<div class="box"><p>The v1 agent (December 2025) had 8 numbers plus 32 lidar rays, but <b>every ray read 0, always</b>.
+The ray cast asked "is this point on a road tile?" by looking for polygons in <code>env.road</code>, which holds Box2D bodies,
+not polygons, so the answer was always "no". Its "traction" input read 1 at all times (wheels have no
+<code>ground_contact</code>; they keep a set of the tiles they touch). So it drove on speed and compass heading alone,
+which is why it never learned to follow the road. A test now checks the rays see the road on the start line
+(<code>tests/test_lidar.py</code>), and that the fast numba lidar answers exactly like the pure-Python reference.</p></div>
 </main>
 <script src="site.js?v=0b775546"></script>
 <script src="common.js?v=448bd7f6"></script>
 <script src="project.js?v=b9a19707"></script>
 
+<script id="inline">(async function(){const d=await get('senses.json'); if(!d) return;
+$('actnote').textContent=`Track ${d.seed}, frame ${d.frame}. The model answered: steer ${d.action[0].toFixed(2)}, pedal ${d.action[1].toFixed(2)} (gas).`;
+$('vals').innerHTML='<tr><th>#</th><th>Input</th><th>Value</th></tr>'+d.names.map((n,i)=>`<tr><td>${i}</td><td>${esc(n)}</td><td class="num">${d.values[i].toFixed(3)}</td></tr>`).join('');})();</script>
 </body>
 </html>

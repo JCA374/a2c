@@ -3,17 +3,52 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Speed</title>
+<title>Drive A2C: Speed</title>
 <link rel="stylesheet" href="style.css?v=ea0a339d">
 </head>
 <body>
 <main>
 <h1>Speed</h1>
-<p class="lede"><!-- WRITE: the machine (nproc, RAM, GPU), profiles, and before/after timings of each optimisation, measured end to end. --></p>
+<p class="lede">The machine: a laptop with 8 CPU threads, 7 GB RAM and no GPU. Every number here is measured. The first
+speed-up was not a faster language but <b>not drawing a picture nobody looked at</b>.</p>
+
+<h2>One env step, before and after</h2>
+<div class="tablewrap"><table class="t">
+<tr><th>What</th><th>ms per step</th><th>Note</th></tr>
+<tr><td>v1 wrapper stack</td><td class="num">9.44</td><td>CarRacing + v1 wrappers + v1 lidar (which, being blind, quit early)</td></tr>
+<tr><td>CarRacing alone</td><td class="num">8.01</td><td>it draws its 96&times;96 state image inside every <code>step()</code></td></tr>
+<tr><td>CarRacing without that drawing</td><td class="num">0.09</td><td>Box2D physics: the floor</td></tr>
+<tr><td><b>v2 training env</b></td><td class="num"><b>~0.5</b></td><td>physics + the 49-number observation (numba lidar, NumPy glue)</td></tr>
+</table></div>
+<p class="muted small">The drawing is 99% of a CarRacing step. Training skips it (<code>render_pixels=False</code>); videos still render.
+<code>tests/test_equivalence.py</code> runs the reference (pixels drawn, pure-Python lidar) and the fast env side by side and
+checks every observation, reward and episode end is identical, bit for bit.</p>
+
+<h2>End to end</h2>
+<p id="e2e" class="muted"></p>
+
+<h2>The lidar bake-off</h2>
+<p>The new lidar casts 19 rays, sampling every metre up to 60 m and testing each sample against the nearby road
+tiles. Six implementations of the same kernel (<code>experiments/bakeoff/</code>), each checked against the pure-Python
+reference on 900 car poses &times; 19 rays on three real tracks:</p>
+<div class="tablewrap"><table class="t" id="bake"></table></div>
+<p class="muted small" id="bakenote"></p>
+<div class="box"><h3>The choice: numba</h3><p>All six give the same answers bit for bit. C++ with <code>-O3 -march=native</code> is the
+fastest on a batch, but an env step casts one pose at a time, where numba's call is cheapest. Its source is the
+Python reference itself, so the two cannot drift apart, and it needs no build step. A full step now costs about
+5&times; the physics floor; the rest is Python glue and the vector-env pipes. The next speed-up would be to move the
+whole observation into numba. It isn't worth doing yet: the update and the eval workers share the same 8 threads.</p></div>
 </main>
 <script src="site.js?v=0b775546"></script>
 <script src="common.js?v=448bd7f6"></script>
 <script src="project.js?v=b9a19707"></script>
 
+<script id="inline">(async function(){const [b,st,s]=await Promise.all([get('bakeoff.json'),get('stats.json'),get('status.json')]);
+if(b){const f=(v,d=0)=>v==null?'–':Number(v).toLocaleString('en',{maximumFractionDigits:d});
+$('bake').innerHTML='<tr><th>Implementation</th><th>bit-identical</th><th>poses/s, 1 thread</th><th>&times; Python</th><th>poses/s, 8 threads</th><th>one pose (&micro;s)</th></tr>'+b.rows.map(r=>`<tr><td>${esc(r.impl)}</td><td class="num">${(100*r.bit_identical).toFixed(0)}%</td><td class="num">${f(r.poses_per_s_1)}</td><td class="num">${f(r.speedup_1)}&times;</td><td class="num">${f(r.poses_per_s_all)}</td><td class="num">${f(r.one_pose_us,1)}</td></tr>`).join('');
+$('bakenote').textContent=`Measured with load average ${b.meta.load_avg} (another job was running), so speeds are indicative; exactness holds regardless.`;}
+if(st&&s){const run=(s.runs.find(r=>r.alive)||s.runs[s.runs.length-1]||{}).run; const rows=(st[run]||[]).slice(-50);
+if(rows.length){const sps=rows.reduce((a,r)=>a+(+r.steps_per_s),0)/rows.length, cf=rows.reduce((a,r)=>a+(+r.collect_frac),0)/rows.length;
+$('e2e').innerHTML=`Run <b>${esc(run)}</b>, last ${rows.length} updates: <b>${sps.toFixed(0)} steps/s</b> wall clock with 8 cars in parallel (1 process each), including the network update. ${(100*cf).toFixed(0)}% of the time is driving (collecting), ${(100-100*cf).toFixed(0)}% is learning (10 PPO epochs over each batch of 2,048 steps). That is ${(sps*3600/1e6).toFixed(1)} M steps per hour; v1 needed about 9.4 ms per step per car.`;}}})();</script>
 </body>
 </html>

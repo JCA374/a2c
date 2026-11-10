@@ -3,17 +3,77 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>The model</title>
+<title>Drive A2C: The model</title>
 <link rel="stylesheet" href="style.css?v=ea0a339d">
 </head>
 <body>
 <main>
 <h1>The model</h1>
-<p class="lede"><!-- WRITE: very educational, with examples: what the model is (a diagram), how it learns, what it is paid for, how it changed over time. Embed films here (video controls, never loop). --></p>
+<p class="lede">Two small neural networks, an <b>actor</b> that drives and a <b>critic</b> that judges, learning together from
+millions of frames of their own driving. There are no human laps to copy: everything comes from trial, error and the score.</p>
+
+<div id="films"></div>
+
+<h2>What it is</h2>
+<figure class="box">
+<svg viewBox="0 0 760 270" role="img" aria-label="Network diagram: 49 inputs feed an actor (256, 256 tanh units, 2 outputs) and a critic (256, 256 tanh units, 1 output)" style="width:100%;height:auto;font:13px system-ui,sans-serif">
+<style>.bx{fill:var(--panel);stroke:var(--line);stroke-width:1.5}.ac{stroke:var(--accent)}.wa{stroke:var(--warn)}.tx{fill:var(--ink)}.mu{fill:var(--muted)}.ln{stroke:var(--muted);stroke-width:1.2;fill:none;marker-end:url(#ar)}</style>
+<defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="var(--muted)"/></marker></defs>
+<rect class="bx" x="10" y="95" width="120" height="80" rx="10"/><text class="tx" x="70" y="128" text-anchor="middle" font-weight="600">49 inputs</text><text class="mu" x="70" y="148" text-anchor="middle">standardised</text>
+<path class="ln" d="M130,120 C160,120 160,60 190,60"/><path class="ln" d="M130,150 C160,150 160,210 190,210"/>
+<rect class="bx ac" x="190" y="30" width="110" height="60" rx="10"/><text class="tx" x="245" y="57" text-anchor="middle">256 tanh</text><text class="mu" x="245" y="75" text-anchor="middle">layer 1</text>
+<rect class="bx ac" x="330" y="30" width="110" height="60" rx="10"/><text class="tx" x="385" y="57" text-anchor="middle">256 tanh</text><text class="mu" x="385" y="75" text-anchor="middle">layer 2</text>
+<rect class="bx ac" x="470" y="20" width="130" height="80" rx="10"/><text class="tx" x="535" y="46" text-anchor="middle" font-weight="600">actor</text><text class="mu" x="535" y="64" text-anchor="middle">2 means + 2 spreads</text><text class="mu" x="535" y="82" text-anchor="middle">sample, then tanh</text>
+<path class="ln" d="M300,60 L330,60"/><path class="ln" d="M440,60 L470,60"/><path class="ln" d="M600,60 L630,60"/>
+<text class="tx" x="636" y="52" font-weight="600">steer</text><text class="tx" x="636" y="72" font-weight="600">pedal</text>
+<rect class="bx wa" x="190" y="180" width="110" height="60" rx="10"/><text class="tx" x="245" y="207" text-anchor="middle">256 tanh</text><text class="mu" x="245" y="225" text-anchor="middle">layer 1</text>
+<rect class="bx wa" x="330" y="180" width="110" height="60" rx="10"/><text class="tx" x="385" y="207" text-anchor="middle">256 tanh</text><text class="mu" x="385" y="225" text-anchor="middle">layer 2</text>
+<rect class="bx wa" x="470" y="170" width="130" height="80" rx="10"/><text class="tx" x="535" y="198" text-anchor="middle" font-weight="600">critic</text><text class="mu" x="535" y="216" text-anchor="middle">1 number: the score</text><text class="mu" x="535" y="234" text-anchor="middle">it expects from here</text>
+<path class="ln" d="M300,210 L330,210"/><path class="ln" d="M440,210 L470,210"/>
+</svg>
+<figcaption class="muted small">About 145,000 weights in all. Actor and critic share nothing but the inputs. While training, the actor's output is a
+bell curve per action (mean and spread) that it samples from: that is how it explores. When it is judged, it
+drives the mean: same track, same laps, every time.</figcaption></figure>
+
+<h2>How it learns</h2>
+<div class="box">
+<p><b>1. Drive.</b> 8 cars drive 256 frames each on random tracks: 2,048 frames with what the actor did and what it scored.</p>
+<p><b>2. Judge.</b> For each frame the critic guessed the score still to come. The <i>advantage</i> is how much better things
+went than that guess: positive means "that action was better than usual here". It uses the actual rewards a few frames
+ahead and the critic's guess after that (GAE, &lambda; = 0.95, a future reward 100 frames away counts 0.99<sup>100</sup> &asymp; 37%).</p>
+<p><b>3. Improve.</b> The actor makes actions with a positive advantage more likely and those with a negative one less
+likely; the critic moves its guesses toward what really happened.</p>
+<p><b>A2C vs PPO.</b> A2C, the original algorithm of this project, takes one gradient step on each batch and throws it
+away. PPO takes 10 passes over the same batch, but clips each change, so the new policy can't drift more than ~20%
+from the one that collected the data. Same network, same advantages; PPO gets ~10&times; more learning out of every frame.
+Both are in <code>a2c_agent.py</code> (<code>--algo a2c</code> / <code>--algo ppo</code>).</p></div>
+
+<h2>What it is paid for</h2>
+<div class="box"><p>CarRacing's own score, and nothing else: each of the track's ~300 tiles pays 1000/N the first time a wheel touches it
+(about +3.3), and every frame costs &minus;0.1. A full lap in 800 frames scores about 1000 &minus; 80 = 920. Going fast is worth it, but a missed
+tile is gone, and leaving the 2,000-unit playfield costs &minus;100 and ends the episode. In the first stage an episode is also cut short (&minus;50)
+after 1 s fully on grass or 3 s without a new tile.</p>
+<p class="muted small">To keep learning steady, rewards are divided by the running spread of the discounted return (the critic then
+predicts numbers near 1, not 300). When an episode hits the 1000-frame limit, the critic's value of the last state is added,
+because a time limit is not the car's fault.</p></div>
+
+<h2>How it changed</h2>
+<div class="tablewrap"><table class="t">
+<tr><th></th><th>v1 (Dec 2025)</th><th>v2 (Nov 2026)</th></tr>
+<tr><td>Inputs</td><td>8 + 32 lidar rays, <b>all rays 0</b>, traction always 1</td><td>49: dynamics, wheels on road, centre line ahead, 19 working rays</td></tr>
+<tr><td>Actions</td><td>steer, gas, brake (gas and brake could fight)</td><td>steer, pedal (+ gas / &minus; brake)</td></tr>
+<tr><td>Reward</td><td>+10 per tile, off-track penalty that never fired, finish bonus that could never be paid</td><td>CarRacing's own score</td></tr>
+<tr><td>Learner</td><td>A2C, 1 step per batch, no normalisation; exploration noise never shrank</td><td>PPO (or A2C), normalised inputs and rewards, time-limit bootstrap</td></tr>
+<tr><td>Score on 100 unseen tracks</td><td><b>&minus;42.9</b></td><td id="v2score">see the Log</td></tr>
+</table></div>
 </main>
 <script src="site.js?v=0b775546"></script>
 <script src="common.js?v=448bd7f6"></script>
 <script src="project.js?v=b9a19707"></script>
 
+<script id="inline">(async function(){const s=await get('status.json'); const g=Object.values((s||{}).goals||{}).sort((a,b)=>b.mean-a.mean)[0];
+if(g) $('v2score').innerHTML=`<b>${g.mean.toFixed(1)}</b> (95% ${g.ci[0].toFixed(0)}-${g.ci[1].toFixed(0)}), laps finished ${(100*g.laps).toFixed(0)}%`;
+const f=await fetch('video/films.json?t='+Date.now()).then(r=>r.ok?r.json():[]).catch(()=>[]);
+$('films').innerHTML=f.map(x=>`<figure class="box"><h3>🎬 ${esc(x.title)}</h3><video src="video/${x.file}" controls preload="metadata" playsinline style="width:100%;border-radius:8px" poster="video/${x.poster||''}"></video><figcaption class="muted small">${esc(x.desc)}</figcaption></figure>`).join('');})();</script>
 </body>
 </html>
