@@ -1,0 +1,5 @@
+["The v1 agent (Dec 2025) scored -42.9 on 100 unseen tracks: every lidar ray read 0, traction always 1, and the finish bonus could never be paid.",
+ "New 49-number observation; training skips CarRacing's pixel drawing (99% of a step), tested bit-identical; numba lidar chosen by a six-way bake-off.",
+ "PPO: validation 457 at 0.1 M steps, 910 at 1.1 M steps.",
+ "Goal check of the 1.1 M champion: mean 877.6 (95% 843.5-911.6), median 933.4, lap finished on 87/100 tracks. Goal 900 not reached yet.",
+ "Next: train to 6 M steps and re-check newer champions on the same 100 tracks."]
