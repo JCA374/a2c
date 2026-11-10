@@ -1,0 +1,79 @@
+{
+ "agent": {
+  "algo": "ppo",
+  "total_steps": 6000000,
+  "rollout_length": 256,
+  "gamma": 0.99,
+  "gae_lambda": 0.95,
+  "learning_rate": 0.0003,
+  "lr_final_fraction": 0.1,
+  "ent_coef": 0.0,
+  "value_coef": 0.5,
+  "max_grad_norm": 0.5,
+  "ppo_epochs": 10,
+  "ppo_minibatches": 8,
+  "ppo_clip": 0.2,
+  "target_kl": 0.03,
+  "hidden": 256,
+  "init_log_std": -0.5,
+  "normalize_obs": true,
+  "normalize_reward": true,
+  "device": "cpu"
+ },
+ "env": {
+  "render_mode": null,
+  "render_pixels": false,
+  "domain_randomize": false,
+  "action_mode": "2d",
+  "training": true,
+  "reward": {
+   "native_scale": 1.0,
+   "off_road_penalty": 0.0,
+   "finish_bonus": 0.0,
+   "early_stop_penalty": -50.0
+  },
+  "episode": {
+   "max_steps": 1000,
+   "off_road_patience": 50,
+   "no_progress_patience": 150
+  },
+  "obs": {
+   "lidar_rays": 19,
+   "lidar_fov": 0.6,
+   "lidar_max_distance": 60.0,
+   "lidar_step": 1.0,
+   "lookahead": [
+    2,
+    4,
+    7,
+    11,
+    16,
+    22,
+    30,
+    40
+   ],
+   "lidar_impl": "numba"
+  }
+ },
+ "num_envs": 8,
+ "seed": 0,
+ "eval_every": 100000,
+ "validation_seeds": [
+  100,
+  101,
+  102,
+  103,
+  104,
+  105,
+  106,
+  107,
+  108,
+  109,
+  110,
+  111,
+  112,
+  113,
+  114,
+  115
+ ]
+}

@@ -1,0 +1,5 @@
+{"t": "2026-11-10T21:10:08", "kind": "run_start", "algo": "ppo", "total_steps": 6000000, "num_envs": 8, "obs_dim": 49}
+{"t": "2026-11-10T21:10:08", "kind": "stage_start", "stage": "Learn the road", "expect": "300-700 within 1-2M steps", "step": 0}
+{"t": "2026-11-10T21:11:09", "kind": "val_check", "step": 100352, "check": {"score": 456.6692051730605, "laps": 0.0, "tiles": 0.5566692051730737, "worst": 47.65100671141343, "n": 16}}
+{"t": "2026-11-10T21:11:09", "kind": "goal_best", "step": 100352, "champion": "runs/ppo_v2_r1/champions/step_000100352.pt", "check": {"score": 456.6692051730605, "laps": 0.0, "tiles": 0.5566692051730737, "worst": 47.65100671141343, "n": 16}}
+{"t": "2026-11-10T21:13:04", "kind": "val_check", "step": 200704, "check": {"score": 380.567167051796, "laps": 0.125, "tiles": 0.4756734170518043, "worst": 47.65100671141343, "n": 16}}

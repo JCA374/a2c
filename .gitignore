@@ -1,17 +1,13 @@
-# Bytecode and caches
 __pycache__/
 *.pyc
-*.pyo
-*.pyd
-
-# Virtual environments
 .venv/
-env/
-venv/
-
-# Logs and checkpoints
-logs/
-*.pt
-
-# Pytest cache
 .pytest_cache/
+logs/
+publish_loop.pid
+# checkpoints and run logs stay local; stats/events/curriculum are published via docs/data
+*.pt
+runs/*/*.log
+runs/*.log
+experiments/bakeoff/out/*.so
+experiments/bakeoff/out/*.npz
+experiments/bakeoff/rust/target/

@@ -1,361 +1,224 @@
+"""Actor-critic agents for CarRacing: A2C (one gradient step per rollout) and PPO (clipped, several epochs).
+
+Both share the network, the rollout buffer and GAE. PPO is the default because it reuses each rollout ~10 times;
+`--algo a2c` gives the original algorithm with the same fixes (normalisation, bootstrapping, working inputs)."""
 from __future__ import annotations
 
-from collections import deque
-from dataclasses import dataclass
-from pathlib import Path
+import math
+from dataclasses import asdict, dataclass
 from typing import Optional, Tuple
 
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.distributions import Normal
-from tqdm import tqdm
 
-from log_utils import TrainingLogger
 
 @dataclass
 class A2CConfig:
-    total_steps: int = 500_000
-    rollout_length: int = 128
+    algo: str = "ppo"  # "ppo" or "a2c"
+    total_steps: int = 5_000_000
+    rollout_length: int = 256  # steps per env between updates
     gamma: float = 0.99
     gae_lambda: float = 0.95
-    learning_rate: float = 1e-4  # REDUCED from 3e-4 for value function stability
-    ent_coef: float = 0.01
+    learning_rate: float = 3e-4
+    lr_final_fraction: float = 0.1  # linear decay to this fraction of learning_rate
+    ent_coef: float = 0.0
     value_coef: float = 0.5
     max_grad_norm: float = 0.5
-    log_interval: int = 10
-    device: Optional[str] = None
-    clip_advantages: Optional[float] = None  # e.g., 10.0 to prevent extreme updates
+    ppo_epochs: int = 10
+    ppo_minibatches: int = 8
+    ppo_clip: float = 0.2
+    target_kl: Optional[float] = 0.03  # stop a PPO update's epochs early above this KL
+    hidden: int = 256
+    init_log_std: float = -0.5
+    normalize_obs: bool = True
+    normalize_reward: bool = True
+    device: str = "cpu"
 
 
-class RolloutBuffer:
-    """Fixed-size rollout storage with GAE computation."""
+class RunningMeanStd:
+    """Running mean/variance (Chan et al. parallel update), as in VecNormalize."""
 
-    def __init__(self, num_steps: int, num_envs: int, obs_shape: Tuple[int, ...], action_shape: Tuple[int, ...], device):
-        obs_dim = int(np.prod(obs_shape))
-        action_dim = int(np.prod(action_shape))
-        self.num_steps = num_steps
-        self.num_envs = num_envs
-        self.device = device
+    def __init__(self, shape=()):
+        self.mean = np.zeros(shape, np.float64)
+        self.var = np.ones(shape, np.float64)
+        self.count = 1e-4
 
-        self.obs = torch.zeros((num_steps, num_envs, obs_dim), device=device)
-        self.actions = torch.zeros((num_steps, num_envs, action_dim), device=device)
-        self.rewards = torch.zeros((num_steps, num_envs), device=device)
-        self.dones = torch.zeros((num_steps, num_envs), device=device)
-        self.values = torch.zeros((num_steps, num_envs), device=device)
-        self.log_probs = torch.zeros((num_steps, num_envs), device=device)
+    def update(self, x):
+        x = np.asarray(x, np.float64).reshape((-1,) + self.mean.shape)
+        bm, bv, bc = x.mean(0), x.var(0), x.shape[0]
+        delta, tot = bm - self.mean, self.count + bc
+        self.mean = self.mean + delta * bc / tot
+        self.var = (self.var * self.count + bv * bc + delta**2 * self.count * bc / tot) / tot
+        self.count = tot
 
-        self.advantages = torch.zeros((num_steps, num_envs), device=device)
-        self.returns = torch.zeros((num_steps, num_envs), device=device)
-        self._step = 0
+    def state(self):
+        return {"mean": self.mean.tolist(), "var": self.var.tolist(), "count": self.count}
 
-    def add(self, obs, actions, rewards, dones, values, log_probs):
-        if self._step >= self.num_steps:
-            raise IndexError("RolloutBuffer is full")
-        self.obs[self._step] = obs
-        self.actions[self._step] = actions
-        self.rewards[self._step] = rewards
-        self.dones[self._step] = dones
-        self.values[self._step] = values
-        self.log_probs[self._step] = log_probs
-        self._step += 1
+    def load(self, s):
+        self.mean, self.var, self.count = np.array(s["mean"]), np.array(s["var"]), s["count"]
 
-    def compute_returns_and_advantages(self, last_values, gamma: float, gae_lambda: float):
-        last_advantage = torch.zeros_like(last_values)
-        for step in reversed(range(self.num_steps)):
-            next_values = last_values if step == self.num_steps - 1 else self.values[step + 1]
-            next_non_terminal = 1.0 - self.dones[step]
-            delta = self.rewards[step] + gamma * next_values * next_non_terminal - self.values[step]
-            last_advantage = delta + gamma * gae_lambda * next_non_terminal * last_advantage
-            self.advantages[step] = last_advantage
-        self.returns = self.advantages + self.values
 
-    def get(self):
-        # Flatten rollout dimension
-        batch_obs = self.obs.reshape(-1, self.obs.shape[-1])
-        batch_actions = self.actions.reshape(-1, self.actions.shape[-1])
-        batch_log_probs = self.log_probs.reshape(-1)
-        batch_advantages = self.advantages.reshape(-1)
-        batch_returns = self.returns.reshape(-1)
-        batch_values = self.values.reshape(-1)
-        return batch_obs, batch_actions, batch_log_probs, batch_advantages, batch_returns, batch_values
-
-    def reset(self):
-        self._step = 0
+def _layer(i, o, gain=math.sqrt(2)):
+    lin = nn.Linear(i, o)
+    nn.init.orthogonal_(lin.weight, gain)
+    nn.init.zeros_(lin.bias)
+    return lin
 
 
 class ActorCritic(nn.Module):
-    def __init__(self, obs_dim: int, action_dim: int, action_low=None, action_high=None):
+    """Separate policy and value MLPs (tanh). Policy: Gaussian on R^A, squashed by tanh into the action box."""
+
+    def __init__(self, obs_dim: int, action_dim: int, hidden: int = 256, init_log_std: float = -0.5,
+                 action_low=None, action_high=None):
         super().__init__()
-        hidden = 256
-        self.policy_net = nn.Sequential(
-            nn.Linear(obs_dim, hidden),
-            nn.Tanh(),
-            nn.Linear(hidden, hidden),
-            nn.Tanh(),
-        )
-        self.value_net = nn.Sequential(
-            nn.Linear(obs_dim, hidden),
-            nn.Tanh(),
-            nn.Linear(hidden, 1),
-        )
-        self.mean_head = nn.Linear(hidden, action_dim)
-        self.log_std = nn.Parameter(torch.zeros(action_dim))
-        if action_low is None or action_high is None:
-            action_low = -np.ones(action_dim, dtype=np.float32)
-            action_high = np.ones(action_dim, dtype=np.float32)
-        action_low = torch.as_tensor(action_low, dtype=torch.float32)
-        action_high = torch.as_tensor(action_high, dtype=torch.float32)
-        self.register_buffer("action_low", action_low)
-        self.register_buffer("action_high", action_high)
-        self.register_buffer("action_scale", (action_high - action_low) / 2.0)
-        self.register_buffer("action_bias", (action_high + action_low) / 2.0)
-        self._init_action_biases()
+        self.policy_net = nn.Sequential(_layer(obs_dim, hidden), nn.Tanh(), _layer(hidden, hidden), nn.Tanh())
+        self.mean_head = _layer(hidden, action_dim, gain=0.01)
+        self.value_net = nn.Sequential(_layer(obs_dim, hidden), nn.Tanh(), _layer(hidden, hidden), nn.Tanh(),
+                                       _layer(hidden, 1, gain=1.0))
+        self.log_std = nn.Parameter(torch.full((action_dim,), float(init_log_std)))
+        low = torch.as_tensor(action_low if action_low is not None else -np.ones(action_dim), dtype=torch.float32)
+        high = torch.as_tensor(action_high if action_high is not None else np.ones(action_dim), dtype=torch.float32)
+        self.register_buffer("action_scale", (high - low) / 2.0)
+        self.register_buffer("action_bias", (high + low) / 2.0)
 
-    def forward(self, obs: torch.Tensor):
-        features = self.policy_net(obs)
-        mean = self.mean_head(features)
-        value = self.value_net(obs).squeeze(-1)
-        return mean, value
+    def dist(self, obs):
+        mean = self.mean_head(self.policy_net(obs))
+        return Normal(mean, self.log_std.clamp(-5.0, 1.0).exp().expand_as(mean))
 
-    def get_dist(self, obs: torch.Tensor) -> Normal:
-        mean, _ = self.forward(obs)
-        std = torch.exp(self.log_std).clamp_min(1e-4)
-        return Normal(mean, std)
+    def value(self, obs):
+        return self.value_net(obs).squeeze(-1)
 
-    def act(self, obs: torch.Tensor):
-        dist = self.get_dist(obs)
-        raw_actions = dist.sample()
-        squashed = torch.tanh(raw_actions)
-        actions = squashed * self.action_scale + self.action_bias
-        log_probs = dist.log_prob(raw_actions).sum(-1)
-        log_probs = log_probs - self._squash_correction(squashed)
-        entropy = dist.entropy().sum(-1)
-        _, value = self.forward(obs)
-        return actions, log_probs, entropy, value
+    def _log_prob(self, dist, raw):
+        # change of variables for a = scale * tanh(raw) + bias; log(1 - tanh^2) in a stable form
+        corr = 2.0 * (math.log(2.0) - raw - nn.functional.softplus(-2.0 * raw))
+        return (dist.log_prob(raw) - corr).sum(-1) - torch.log(self.action_scale).sum()
 
-    def evaluate_actions(self, obs: torch.Tensor, actions: torch.Tensor):
-        dist = self.get_dist(obs)
-        scaled = self._unsquash(actions)
-        raw_actions = self._atanh(scaled)
-        log_probs = dist.log_prob(raw_actions).sum(-1)
-        log_probs = log_probs - self._squash_correction(scaled)
-        entropy = dist.entropy().sum(-1)
-        _, value = self.forward(obs)
-        return log_probs, entropy, value
+    def act(self, obs):
+        """Sample. Returns the env action, the pre-squash sample (stored for the update), log-prob, value."""
+        d = self.dist(obs)
+        raw = d.sample()
+        return torch.tanh(raw) * self.action_scale + self.action_bias, raw, self._log_prob(d, raw), self.value(obs)
 
-    def get_value(self, obs: torch.Tensor):
-        _, value = self.forward(obs)
-        return value
+    def evaluate(self, obs, raw):
+        d = self.dist(obs)
+        return self._log_prob(d, raw), d.entropy().sum(-1), self.value(obs)
 
-    def deterministic_action(self, obs: torch.Tensor):
-        mean, _ = self.forward(obs)
-        squashed = torch.tanh(mean)
-        return squashed * self.action_scale + self.action_bias
-
-    def _squash_correction(self, squashed: torch.Tensor) -> torch.Tensor:
-        log_scale = torch.log(self.action_scale + 1e-6).sum()
-        log_det = log_scale + torch.log(1.0 - squashed**2 + 1e-6).sum(-1)
-        return log_det
-
-    def _unsquash(self, actions: torch.Tensor) -> torch.Tensor:
-        scaled = (actions - self.action_bias) / (self.action_scale + 1e-6)
-        return torch.clamp(scaled, -1.0 + 1e-6, 1.0 - 1e-6)
-
-    @staticmethod
-    def _atanh(x: torch.Tensor) -> torch.Tensor:
-        return 0.5 * (torch.log1p(x) - torch.log1p(-x))
-
-    def _init_action_biases(self) -> None:
-        """Bias gas/brake toward motion for asymmetric action spaces like CarRacing."""
-        if self.mean_head.bias is None:
-            return
-        if self.action_low.numel() >= 3:
-            low = self.action_low.cpu().numpy()
-            high = self.action_high.cpu().numpy()
-            with torch.no_grad():
-                if np.isclose(low[1], 0.0) and np.isclose(high[1], 1.0):
-                    # Encourage throttle at initialization.
-                    self.mean_head.bias[1] = 1.0
-                if np.isclose(low[2], 0.0) and np.isclose(high[2], 1.0):
-                    # Discourage braking at initialization.
-                    self.mean_head.bias[2] = -2.0
+    def deterministic_action(self, obs):
+        return torch.tanh(self.dist(obs).mean) * self.action_scale + self.action_bias
 
 
-class A2CTrainer:
-    def __init__(
-        self,
-        envs,
-        config: Optional[A2CConfig] = None,
-        obs_shape: Optional[Tuple[int, ...]] = None,
-        action_shape: Optional[Tuple[int, ...]] = None,
-        logger: Optional[TrainingLogger] = None,
-        best_model_path: Optional[Path] = None,
-    ):
-        self.envs = envs
-        self.cfg = config or A2CConfig()
-        self.logger = logger
-        self.device = torch.device(self.cfg.device or ("cuda" if torch.cuda.is_available() else "cpu"))
-        obs_shape = obs_shape or envs.single_observation_space.shape
-        action_shape = action_shape or envs.single_action_space.shape
-        obs_dim = int(np.prod(obs_shape))
-        action_dim = int(np.prod(action_shape))
-        action_low = envs.single_action_space.low.reshape(-1)
-        action_high = envs.single_action_space.high.reshape(-1)
-        self.policy = ActorCritic(obs_dim, action_dim, action_low=action_low, action_high=action_high).to(self.device)
-        self.optimizer = torch.optim.Adam(self.policy.parameters(), lr=self.cfg.learning_rate)
-        self.buffer = RolloutBuffer(
-            num_steps=self.cfg.rollout_length,
-            num_envs=getattr(envs, "num_envs", 1),
-            obs_shape=obs_shape,
-            action_shape=action_shape,
-            device=self.device,
-        )
-        self.best_model_path = Path(best_model_path) if best_model_path else (logger.log_dir / "best_model.pt" if logger else None)
+class RolloutBuffer:
+    def __init__(self, num_steps, num_envs, obs_dim, action_dim):
+        z = lambda *s: torch.zeros((num_steps, num_envs) + s)
+        self.obs, self.raw = z(obs_dim), z(action_dim)
+        self.rewards, self.dones, self.values, self.log_probs = z(), z(), z(), z()
+        self.advantages, self.returns = z(), z()
+        self.num_steps, self.step = num_steps, 0
 
-    def train(self):
-        obs, _ = self.envs.reset()
-        obs = torch.as_tensor(obs, device=self.device, dtype=torch.float32)
-        global_step = 0
-        num_envs = getattr(self.envs, "num_envs", 1)
-        episode_returns = np.zeros(num_envs, dtype=np.float32)
-        episode_lengths = np.zeros(num_envs, dtype=np.int32)
-        completed_returns = deque(maxlen=10)
-        episodes_completed_count = 0
-        best_return = -np.inf
+    def add(self, obs, raw, rewards, dones, values, log_probs):
+        s = self.step
+        self.obs[s], self.raw[s], self.rewards[s] = obs, raw, rewards
+        self.dones[s], self.values[s], self.log_probs[s] = dones, values, log_probs
+        self.step += 1
 
-        total_updates = self.cfg.total_steps // (self.cfg.rollout_length * num_envs)
-        pbar = tqdm(range(1, total_updates + 1), desc="Training", unit="update")
-        for update in pbar:
-            self.buffer.reset()
-            for step in range(self.cfg.rollout_length):
-                with torch.no_grad():
-                    actions, log_probs, _, values = self.policy.act(obs)
-                next_obs, rewards, terminated, truncated, infos = self.envs.step(actions.cpu().numpy())
-                dones = np.logical_or(terminated, truncated)
+    def compute_returns_and_advantages(self, last_values, gamma, lam):
+        """GAE. dones[t] = 1 cuts the trace after step t; time-limit cuts were already bootstrapped into rewards."""
+        adv = torch.zeros_like(last_values)
+        for t in reversed(range(self.num_steps)):
+            nxt = last_values if t == self.num_steps - 1 else self.values[t + 1]
+            live = 1.0 - self.dones[t]
+            delta = self.rewards[t] + gamma * nxt * live - self.values[t]
+            adv = delta + gamma * lam * live * adv
+            self.advantages[t] = adv
+        self.returns = self.advantages + self.values
 
-                rewards_t = torch.as_tensor(rewards, device=self.device, dtype=torch.float32)
-                dones_t = torch.as_tensor(dones, device=self.device, dtype=torch.float32)
-                self.buffer.add(obs, actions, rewards_t, dones_t, values, log_probs)
+    def flat(self):
+        f = lambda x: x.reshape((-1,) + x.shape[2:])
+        return f(self.obs), f(self.raw), f(self.log_probs), f(self.advantages), f(self.returns), f(self.values)
 
-                episode_returns += rewards
-                episode_lengths += 1
-                for i, done in enumerate(dones):
-                    if done:
-                        is_new_best = episode_returns[i] > best_return
-                        best_return = max(best_return, episode_returns[i])
-                        if self.best_model_path and is_new_best:
-                            torch.save(self.policy.state_dict(), self.best_model_path)
 
-                        completed_returns.append((episode_returns[i], episode_lengths[i]))
-                        episodes_completed_count += 1
-                        episode_returns[i] = 0.0
-                        episode_lengths[i] = 0
+class Agent:
+    """The network plus observation normalisation: everything needed to drive, saved in one checkpoint."""
 
-                obs = torch.as_tensor(next_obs, device=self.device, dtype=torch.float32)
-                global_step += num_envs
+    def __init__(self, obs_dim, action_dim, cfg: A2CConfig, action_low=None, action_high=None):
+        self.cfg = cfg
+        self.net = ActorCritic(obs_dim, action_dim, cfg.hidden, cfg.init_log_std, action_low, action_high)
+        self.obs_rms = RunningMeanStd((obs_dim,))
 
-            with torch.no_grad():
-                next_values = self.policy.get_value(obs)
-            self.buffer.compute_returns_and_advantages(next_values, self.cfg.gamma, self.cfg.gae_lambda)
+    def norm(self, obs):
+        obs = np.asarray(obs, np.float32)
+        if self.cfg.normalize_obs:
+            obs = np.clip((obs - self.obs_rms.mean) / np.sqrt(self.obs_rms.var + 1e-8), -10, 10)
+        return torch.as_tensor(obs, dtype=torch.float32)
 
-            (
-                batch_obs,
-                batch_actions,
-                old_log_probs,
-                advantages,
-                returns,
-                values,
-            ) = self.buffer.get()
+    @torch.no_grad()
+    def drive(self, obs):
+        """Deterministic action for one observation (or a batch)."""
+        x = self.norm(obs)
+        return self.net.deterministic_action(x).numpy()
 
-            advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+    def save(self, path, extra=None):
+        torch.save({"net": self.net.state_dict(), "obs_rms": self.obs_rms.state(), "cfg": asdict(self.cfg),
+                    "obs_dim": self.net.policy_net[0].in_features, "action_dim": self.net.log_std.numel(),
+                    "action_low": (self.net.action_bias - self.net.action_scale).tolist(),
+                    "action_high": (self.net.action_bias + self.net.action_scale).tolist(), **(extra or {})}, path)
 
-            # Clip advantages to prevent extreme updates from penalty spikes
-            if self.cfg.clip_advantages is not None:
-                advantages = torch.clamp(
-                    advantages,
-                    -self.cfg.clip_advantages,
-                    self.cfg.clip_advantages
-                )
+    @classmethod
+    def load(cls, path):
+        ck = torch.load(path, map_location="cpu", weights_only=False)
+        agent = cls(ck["obs_dim"], ck["action_dim"], A2CConfig(**ck["cfg"]), ck["action_low"], ck["action_high"])
+        agent.net.load_state_dict(ck["net"])
+        agent.obs_rms.load(ck["obs_rms"])
+        agent.net.eval()
+        agent.meta = {k: v for k, v in ck.items() if k not in ("net", "obs_rms")}
+        return agent
 
-            log_probs, entropy, values_pred = self.policy.evaluate_actions(batch_obs, batch_actions)
 
-            policy_loss = -(advantages.detach() * log_probs).mean()
-            value_loss = F.mse_loss(values_pred, returns)
-            entropy_loss = entropy.mean()
-
-            loss = policy_loss + self.cfg.value_coef * value_loss - self.cfg.ent_coef * entropy_loss
-
-            self.optimizer.zero_grad()
+def update(agent: Agent, opt, buf: RolloutBuffer, cfg: A2CConfig) -> dict:
+    """One A2C or PPO update from a full buffer. Returns the losses for logging."""
+    obs, raw, old_lp, adv, ret, old_v = buf.flat()
+    n = obs.shape[0]
+    if cfg.algo == "a2c":
+        epochs, mb = 1, n
+    else:
+        epochs, mb = cfg.ppo_epochs, n // cfg.ppo_minibatches
+    stats = {"loss_policy": [], "loss_value": [], "entropy": [], "kl": [], "clip_frac": []}
+    for _ in range(epochs):
+        perm = torch.randperm(n)
+        stop = False
+        for s in range(0, n, mb):
+            i = perm[s:s + mb]
+            a = adv[i]
+            a = (a - a.mean()) / (a.std() + 1e-8)
+            lp, ent, v = agent.net.evaluate(obs[i], raw[i])
+            log_ratio = lp - old_lp[i]
+            if cfg.algo == "a2c":
+                pl = -(a * lp).mean()
+            else:
+                ratio = log_ratio.exp()
+                pl = -torch.min(ratio * a, ratio.clamp(1 - cfg.ppo_clip, 1 + cfg.ppo_clip) * a).mean()
+            vl = 0.5 * (v - ret[i]).pow(2).mean()
+            loss = pl + cfg.value_coef * vl - cfg.ent_coef * ent.mean()
+            opt.zero_grad()
             loss.backward()
-            nn.utils.clip_grad_norm_(self.policy.parameters(), self.cfg.max_grad_norm)
-            self.optimizer.step()
-
-            # Compute metrics
-            mean_return = float(np.mean([r for r, _ in completed_returns]) if completed_returns else 0.0)
-            mean_length = float(np.mean([l for _, l in completed_returns]) if completed_returns else 0.0)
-            # Only update best_return when we have actual completed episodes
-            if completed_returns:
-                # best_return is now updated inside the episode completion loop
-                pass
-            action_mean = self.buffer.actions.mean(dim=(0, 1)).detach().cpu().numpy()
-            action_std = self.buffer.actions.std(dim=(0, 1)).detach().cpu().numpy()
-            rollout_reward = float(self.buffer.rewards.mean().item())
-
-            # Update progress bar with key metrics
-            pbar.set_postfix({
-                'loss': f'{loss.item():.3f}',
-                'return': f'{mean_return:.1f}',
-                'eps': episodes_completed_count,
-                'steps': global_step
-            })
-
-            if update % self.cfg.log_interval == 0:
-                # Detailed console output at log intervals
-                tqdm.write(
-                    f"Update {update}/{total_updates} | "
-                    f"step={global_step} | "
-                    f"loss={loss.item():.3f} | "
-                    f"return={mean_return:.2f} | "
-                    f"eps={episodes_completed_count} | "
-                    f"best={best_return:.2f}"
-                )
-                if self.logger:
-                    lr = self.optimizer.param_groups[0].get("lr", self.cfg.learning_rate)
-                    metrics = {
-                        "update": update,
-                        "global_step": global_step,
-                        "loss_total": float(loss.item()),
-                        "loss_policy": float(policy_loss.item()),
-                        "loss_value": float(value_loss.item()),
-                        "entropy": float(entropy_loss.item()),
-                        "mean_return_last10": mean_return,
-                        "mean_length_last10": mean_length,
-                        "best_return": best_return,
-                        "episodes_completed": episodes_completed_count,
-                        "learning_rate": lr,
-                        "gamma": self.cfg.gamma,
-                        "gae_lambda": self.cfg.gae_lambda,
-                        "entropy_coef": self.cfg.ent_coef,
-                        "value_coef": self.cfg.value_coef,
-                        "max_grad_norm": self.cfg.max_grad_norm,
-                        "rollout_length": self.cfg.rollout_length,
-                        "num_envs": num_envs,
-                        "rollout_reward_mean": rollout_reward,
-                    }
-                    for idx, (mean_val, std_val) in enumerate(zip(action_mean, action_std)):
-                        metrics[f"action_mean_{idx}"] = float(mean_val)
-                        metrics[f"action_std_{idx}"] = float(std_val)
-                    if action_mean.shape[0] >= 3:
-                        gas = self.buffer.actions[..., 1]
-                        brake = self.buffer.actions[..., 2]
-                        metrics["action_brake_gt_gas"] = float((brake > gas).float().mean().item())
-                    self.logger.log_metrics(
-                        metrics
-                    )
-                    # Model saving is now handled in the episode completion loop.
-                    # This ensures we save the model that achieved the new best return.
-
-        pbar.close()
-        return self.policy, completed_returns
+            nn.utils.clip_grad_norm_(agent.net.parameters(), cfg.max_grad_norm)
+            opt.step()
+            with torch.no_grad():
+                kl = ((log_ratio.exp() - 1) - log_ratio).mean().item()
+            stats["loss_policy"].append(pl.item())
+            stats["loss_value"].append(vl.item())
+            stats["entropy"].append(ent.mean().item())
+            stats["kl"].append(kl)
+            stats["clip_frac"].append(((log_ratio.exp() - 1).abs() > cfg.ppo_clip).float().mean().item())
+            if cfg.algo == "ppo" and cfg.target_kl and kl > 1.5 * cfg.target_kl:
+                stop = True
+                break
+        if stop:
+            break
+    out = {k: float(np.mean(v)) for k, v in stats.items()}
+    var_y = ret.var().item()
+    out["explained_var"] = float(1 - (ret - old_v).var().item() / var_y) if var_y > 0 else 0.0
+    out["std"] = float(agent.net.log_std.exp().mean().item())
+    return out

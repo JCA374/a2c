@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Drive A2C: Log</title>
+<link rel="stylesheet" href="style.css?v=ea0a339d">
+</head>
+<body>
+<main>
+<header class="hero">
+  <h1>Teach a car to race round tracks it has never seen</h1>
+  <p class="lede">The agent drives Gymnasium's <b>CarRacing-v3</b> from 49 numbers (speed, grip, where the road goes, and 19 lidar rays) instead of pixels.
+The goal: a <b>mean score of 900</b> (the classic "solved" level) on <b>100 random tracks it never trained on</b>, driving deterministically
+under CarRacing's own rules: +1000/N for each of the track's N tiles, &minus;0.1 per frame, 1000 frames. Method: an actor-critic
+(A2C, now trained with its sibling PPO) learning from millions of simulated laps. The first version scored &minus;43: its lidar was blind.</p>
+  <p class="countdown" id="countdown"></p>
+  <p class="muted" id="updated"></p>
+</header>
+<section class="cards" id="cards"></section>
+<section>
+  <h2>Goal table</h2>
+  <p class="muted">Every agent measured on episodes it never saw. The 95% interval is a Wilson interval.</p>
+  <div class="tablewrap"><table class="t" id="goaltable"></table></div>
+</section>
+<section>
+  <h2>Progress</h2>
+  <div class="chartbox"><div class="h"><canvas id="chart"></canvas></div></div>
+  <p class="muted small" id="chartnote"></p>
+</section>
+<section>
+  <h2>Log <span class="muted small">newest first · replays play once, click to watch again</span></h2>
+  <div id="log"></div>
+</section>
+</main>
+<footer>Updated automatically every 15 minutes. Numbers are measured on fresh episodes, not estimated.</footer>
+<script src="site.js?v=0b775546"></script>
+<script src="common.js?v=448bd7f6"></script>
+<script src="project.js?v=b9a19707"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="app.js?v=12bb41c7"></script>
+</body>
+</html>

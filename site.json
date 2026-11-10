@@ -1,0 +1,18 @@
+{
+  "title": "Drive A2C",
+  "icon": "🏎️",
+  "repo": "JCA374/a2c",
+  "goal": {"metric": "mean", "target": 900, "label": "Mean score", "fmt": "num",
+           "columns": [["laps", "Laps finished"], ["tiles", "Track covered"]]},
+  "goal_text": "on 100 unseen tracks (seeds 5000-5099), deterministic driving, CarRacing's own score, 1000 frames. 900 is the classic 'solved' level.",
+  "names": {"baseline_v1": "v1 A2C (Dec 2025, blind lidar)"},
+  "chart": {"x": "step", "x_scale": 1e-6, "x_label": "million steps of driving", "y_label": "score", "y_neg": true,
+            "series": [{"key": "train_score", "label": "own training episodes (last 40)", "style": "line", "color": "--accent", "scale": 1},
+                       {"key": "val_score", "label": "16 fixed validation tracks", "style": "both", "color": "--warn", "scale": 1}]},
+  "cards": [{"label": "Experience", "key": "step", "fmt": "M", "sub": "simulated steps"},
+            {"label": "Speed", "key": "steps_per_s", "sub": "steps per second"},
+            {"label": "Validation", "key": "best_val", "fmt": "num", "sub": "best mean score so far"}],
+  "alive_pattern": "train_a2c.py .*--run {run}( |$)",
+  "replay_seed": 3000777000,
+  "push_globs": ["runs/*/stats.csv", "runs/*/events.jsonl", "runs/*/curriculum.json"]
+}

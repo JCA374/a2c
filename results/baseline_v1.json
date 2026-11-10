@@ -1,0 +1,4 @@
+{"label": "v1 A2C (Dec 2025): logs/fixed_reward_balance_fast/best_model.pt", "n": 100, "metric": "score", "seeds": "5000-5099",
+ "mean": -42.9069, "max": -7.5630, "tiles": 0.0649,
+ "note": "Scored with the v1 code under CarRacing's own reward, deterministic, 1000 frames. The v1 lidar always read 0, traction always 1, and the finish-bonus key never existed. Its training-time best_return of 501 was the shaped return of one stochastic training episode, not this score.",
+ "policy": "v1 best_model.pt"}
