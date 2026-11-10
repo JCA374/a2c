@@ -1,5 +1,5 @@
-"""Run with the v1 code (git d8ea104, before the rewrite): it imports v1 play_model.py.
-"""Score the v1 models (Dec 2025) with the v1 code: CarRacing's own reward, deterministic, 100 held-out tracks."""
+"""Score the v1 models (Dec 2025) with the v1 code: CarRacing's own reward, deterministic, 100 held-out tracks.
+Run it on the v1 code (git d8ea104, before the rewrite): it imports v1's play_model.py and env."""
 import json, sys, numpy as np, torch
 from multiprocessing import Pool
 sys.path.insert(0, '.')
