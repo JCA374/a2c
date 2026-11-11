@@ -20,3 +20,4 @@ voice/*.log
 voice/*/*.log
 voice/*/book.yaml
 voice/*/pipeline.log.jsonl
+voice/*/listen.txt

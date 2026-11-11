@@ -49,7 +49,7 @@ def models():
             label = f"{name} @ {step / 1e6:.1f} M" + (" (best)" if k == 0 else "")
             note = ("Best validation score of this run" if k == 0 else "An earlier best of the same run, to compare") + \
                    f": a checkpoint after {step:,} steps of driving."
-            out.append({'id': f"{name}_s{step}", 'label': label, 'path': c, 'note': note})
+            out.append({'id': f"{name}_s{step}", 'label': label, 'path': os.path.relpath(c, ROOT), 'note': note})
         if len(out) >= 4:
             break
     return out[:4]
@@ -65,7 +65,7 @@ def render_play(policy_path, game, out_mp4):
     os.nice(10)
     from a2c_agent import Agent
     from viz.render import episode_frames
-    frames, r = episode_frames(Agent.load(policy_path), game['seed'], every=2, size=(480, 320), label='2x speed')
+    frames, r = episode_frames(Agent.load(os.path.join(ROOT, policy_path)), game['seed'], every=2, size=(480, 320), label='2x speed')
     encode_mp4(frames, out_mp4, fps=25, hold=25)
     result = 'lap' if r['lap'] else f"{100 * r['tiles']:.0f}% of track"
     return {'ok': bool(r['lap']), 'result': result, 'score': r['score'],
